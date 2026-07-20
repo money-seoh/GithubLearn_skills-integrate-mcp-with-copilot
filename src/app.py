@@ -10,6 +10,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 import os
 from pathlib import Path
+import json
+from typing import Optional
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
@@ -18,6 +20,18 @@ app = FastAPI(title="Mergington High School API",
 current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
+
+# In-memory session storage for logged-in teachers
+logged_in_teachers = {}
+
+# Load teachers from JSON file
+def load_teachers():
+    teachers_file = os.path.join(Path(__file__).parent, "teachers.json")
+    with open(teachers_file, 'r') as f:
+        data = json.load(f)
+    return data['teachers']
+
+teachers = load_teachers()
 
 # In-memory activity database
 activities = {
@@ -83,14 +97,38 @@ def root():
     return RedirectResponse(url="/static/index.html")
 
 
+@app.post("/login")
+def login(username: str, password: str):
+    """Teacher login endpoint"""
+    for teacher in teachers:
+        if teacher["username"] == username and teacher["password"] == password:
+            # Store in session (simple in-memory approach)
+            logged_in_teachers[username] = True
+            return {"message": f"Logged in as {username}", "username": username, "success": True}
+    
+    raise HTTPException(status_code=401, detail="Invalid username or password")
+
+
+@app.post("/logout")
+def logout(username: str):
+    """Teacher logout endpoint"""
+    if username in logged_in_teachers:
+        del logged_in_teachers[username]
+    return {"message": f"Logged out {username}", "success": True}
+
+
 @app.get("/activities")
 def get_activities():
     return activities
 
 
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
-    """Sign up a student for an activity"""
+def signup_for_activity(activity_name: str, email: str, teacher: Optional[str] = None):
+    """Sign up a student for an activity (teachers only)"""
+    # Check if teacher is logged in
+    if teacher is None or teacher not in logged_in_teachers:
+        raise HTTPException(status_code=403, detail="Only teachers can register students")
+    
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -111,8 +149,12 @@ def signup_for_activity(activity_name: str, email: str):
 
 
 @app.delete("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
-    """Unregister a student from an activity"""
+def unregister_from_activity(activity_name: str, email: str, teacher: Optional[str] = None):
+    """Unregister a student from an activity (teachers only)"""
+    # Check if teacher is logged in
+    if teacher is None or teacher not in logged_in_teachers:
+        raise HTTPException(status_code=403, detail="Only teachers can unregister students")
+    
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
